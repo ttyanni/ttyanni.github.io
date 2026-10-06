@@ -179,3 +179,83 @@ if ("IntersectionObserver" in window && linkedSections.length) {
 
   linkedSections.forEach((section) => sectionObserver.observe(section));
 }
+
+(() => {
+  if (window.__landingPageAnalyticsInitialized) return;
+  window.__landingPageAnalyticsInitialized = true;
+
+  const trackEvent = (eventName, parameters) => {
+    if (typeof window.gtag === "function") {
+      window.gtag("event", eventName, parameters);
+    }
+  };
+
+  const sectionTargets = [
+    { selector: "#hero-title", sectionName: "hero" },
+    { selector: "#detail-space-title", sectionName: "detail" },
+    { selector: "#purchase-title", sectionName: "cta" }
+  ]
+    .map(({ selector, sectionName }) => ({ element: document.querySelector(selector), sectionName }))
+    .filter(({ element }) => element);
+
+  const seenSections = new Set();
+  const header = document.getElementById("site-header");
+  let sectionObserver;
+
+  const isDocumentVisible = () => document.visibilityState === "visible";
+
+  const isHalfVisibleBelowHeader = (element) => {
+    const rect = element.getBoundingClientRect();
+    const headerBottom = header ? Math.max(0, header.getBoundingClientRect().bottom) : 0;
+    const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, headerBottom));
+    return rect.height > 0 && visibleHeight / rect.height >= 0.5;
+  };
+
+  const recordSection = ({ element, sectionName }) => {
+    if (!isDocumentVisible() || seenSections.has(sectionName) || !isHalfVisibleBelowHeader(element)) return;
+    seenSections.add(sectionName);
+    trackEvent("section_view", { section_name: sectionName });
+    sectionObserver?.unobserve(element);
+  };
+
+  const observeSections = () => {
+    sectionObserver?.disconnect();
+    if (!("IntersectionObserver" in window)) return;
+
+    const headerHeight = header ? Math.ceil(header.getBoundingClientRect().height) : 0;
+    sectionObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+          const target = sectionTargets.find(({ element }) => element === entry.target);
+          if (target) recordSection(target);
+        }
+      });
+    }, {
+      threshold: 0.5,
+      rootMargin: `-${headerHeight}px 0px 0px 0px`
+    });
+
+    sectionTargets.forEach((target) => {
+      if (!seenSections.has(target.sectionName)) sectionObserver.observe(target.element);
+    });
+  };
+
+  observeSections();
+
+  window.addEventListener("resize", observeSections);
+  document.addEventListener("visibilitychange", () => {
+    if (isDocumentVisible()) sectionTargets.forEach(recordSection);
+  });
+
+  const ctaButtons = new Set([
+    ...document.querySelectorAll("#cta-hero, [data-cta-location='hero']"),
+    ...document.querySelectorAll("#cta-final, [data-cta-location='final']")
+  ]);
+
+  ctaButtons.forEach((button) => {
+    const buttonLocation = button.matches("#cta-hero, [data-cta-location='hero']") ? "hero" : "final";
+    button.addEventListener("click", () => {
+      trackEvent("cta_click", { button_location: buttonLocation });
+    });
+  });
+})();
